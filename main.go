@@ -4,12 +4,14 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"fmt"
 	"image"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"syscall/js"
 
@@ -23,6 +25,7 @@ func main() {
 	js.Global().Set("phashGo", phashGo())
 	js.Global().Set("curlGo", curlGo())
 	js.Global().Set("webGo", webGo())
+	js.Global().Set("tcpGo", tcpGo())
 
 	<-make(chan bool)
 }
@@ -41,29 +44,73 @@ func webGo() js.Func {
 	return curlFunc
 }
 
+func tcpGo() js.Func {
+	curlFunc := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		return tcp()
+	})
+	return curlFunc
+}
+
+func tcp() string {
+	go func() {
+		ln, err := net.Listen("tcp", ":8089")
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+			go func() {
+				for {
+					reader := bufio.NewReader(conn)
+					var buf [128]byte
+					n, err := reader.Read(buf[:]) // 读取数据
+					if err != nil {
+						fmt.Println("read from client failed, err:", err)
+						break
+					}
+					recvStr := string(buf[:n])
+					fmt.Println("收到client端发来的数据：", recvStr)
+					conn.Write([]byte(recvStr)) // 发送数据
+				}
+			}()
+		}
+	}()
+
+	return "ok"
+}
+
 func web() string {
 	http.HandleFunc("/hello", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintf(w, "hello\n") })
-	http.ListenAndServe(":7890", nil)
+	go http.ListenAndServe(":7890", nil)
 	return "ok"
 }
 
 func curl() string {
-	resp, err := http.Get("wasm_exec.js")
-	if err != nil {
-		fmt.Println(err)
-		return err.Error()
-	}
-	defer resp.Body.Close()
+	go func() {
+		resp, err := http.Get("wasm_exec.js")
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		defer resp.Body.Close()
 
-	fmt.Println("http code:", resp.Status)
+		fmt.Println("http code:", resp.Status)
 
-	res, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println(err)
-		return err.Error()
-	}
+		res, err := io.ReadAll(resp.Body)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 
-	return string(res)
+		fmt.Println(string(res))
+	}()
+	return "res"
 }
 
 func phashGo() js.Func {
